@@ -49,6 +49,7 @@ def train_text_adapter(
     dataset_name: str,
     img_size: int,
     logger: logging.Logger,
+    use_base_text_anchor: bool = False,
 ):
     for epoch in range(start_epoch, text_epoch):
         logger.info(f"training text epoch {epoch}:")
@@ -61,15 +62,30 @@ def train_text_adapter(
 
             # forward text
             epoch_text_feature_dict = {}
+            epoch_base_text_feature_dict = {}
             for class_name in list(set(class_names)):
                 text_embedding = get_adapted_single_class_text_embedding(
                     adapted_model, dataset_name, class_name, device
                 )
                 epoch_text_feature_dict[class_name] = text_embedding
+                if use_base_text_anchor:
+                    base_text_embedding = get_adapted_single_class_text_embedding(
+                        clip_surgery, dataset_name, class_name, device
+                    )
+                    epoch_base_text_feature_dict[class_name] = base_text_embedding
             epoch_text_feature = torch.stack(
                 [epoch_text_feature_dict[class_name] for class_name in class_names],
                 dim=0,
             )  # bs,768,2
+            if use_base_text_anchor:
+                epoch_base_text_feature = torch.stack(
+                    [
+                        epoch_base_text_feature_dict[class_name]
+                        for class_name in class_names
+                    ],
+                    dim=0,
+                )  # bs,768,2
+
             # forward image
             with torch.no_grad():
                 _, patch_features = clip_surgery.encode_image(image, [6, 12, 18, 24])
@@ -88,11 +104,17 @@ def train_text_adapter(
                 # bs,patch_num,768
                 patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size)
                 loss = calculate_seg_loss(patch_preds, mask)
-                orthogonal_loss = (
-                    (epoch_text_feature[:, :, 0] * epoch_text_feature[:, :, 1])
-                    .sum(1)
-                    .mean()
-                ) ** 2
+                if not use_base_text_anchor:
+                    orthogonal_loss = (
+                        (epoch_text_feature[:, :, 0] * epoch_text_feature[:, :, 1])
+                        .sum(1)
+                        .mean()
+                    ) ** 2
+                else:
+                    orthogonal_loss = (
+                        (epoch_text_feature[:, :, 0] - epoch_base_text_feature[:, :, 0])
+                        * (epoch_text_feature[:, :, 1] - epoch_base_text_feature[:, :, 1])
+                    ).sum(1).mean() ** 2
                 loss += orthogonal_loss * text_norm_weight
             # backward
             optimizer.zero_grad()
@@ -213,6 +235,7 @@ def main():
     parser.add_argument("--image_adapt_weight", type=float, default=0.1)
     parser.add_argument("--text_adapt_until", type=int, default=3)
     parser.add_argument("--image_adapt_until", type=int, default=6)
+    parser.add_argument("--use_base_text_anchor", action="store_true")
 
     args = parser.parse_args()
     # ========================================================
@@ -332,6 +355,7 @@ def main():
             text_epoch=args.text_epoch,
             img_size=args.img_size,
             logger=logger,
+            use_base_text_anchor=args.use_base_text_anchor,
         )
     del text_dataloader, text_dataset, clip_surgery, text_optimizer
     torch.cuda.empty_cache()
