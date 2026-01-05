@@ -1,6 +1,8 @@
 *.pth
 *.pt
 ckpt/
+data/
+*.out
 final/
 finalOct25/
 finalOct27/
