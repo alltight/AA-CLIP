@@ -28,3 +28,7 @@ __pycache__/
 
 # ignore the constants.py file containing paths
 dataset/constants.py
+
+# ignore /data, *.out files
+data/
+*.out
