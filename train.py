@@ -66,6 +66,7 @@ def train_text_adapter(
                     adapted_model, dataset_name, class_name, device
                 )
                 epoch_text_feature_dict[class_name] = text_embedding
+            
             epoch_text_feature = torch.stack(
                 [epoch_text_feature_dict[class_name] for class_name in class_names],
                 dim=0,
@@ -84,6 +85,7 @@ def train_text_adapter(
                 ]
                 patch_features = [t + cls_token.unsqueeze(1) for t in patch_features]
             # calculate similarity and get prediction
+            
             for f in patch_features:
                 # bs,patch_num,768
                 patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size)
