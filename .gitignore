@@ -28,3 +28,5 @@ __pycache__/
 
 # ignore the constants.py file containing paths
 dataset/constants.py
+
+*.pdf

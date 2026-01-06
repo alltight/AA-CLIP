@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim.lr_scheduler import MultiStepLR
 import ipdb
+from dataset.constants import REAL_NAMES
 from utils import setup_seed
 from model.adapter import AdaptedCLIP
 from model.clip import create_model
@@ -20,6 +21,7 @@ from forward_utils import (
     calculate_similarity_map,
     calculate_seg_loss,
 )
+from model.tokenizer import tokenize
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -39,6 +41,7 @@ def train_text_adapter(
     adapted_model: nn.Module,
     clip_surgery: nn.Module,
     text_norm_weight: float,
+    anchor_weight: float,
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
     # scheduler: torch.optim.lr_scheduler,
@@ -63,6 +66,7 @@ def train_text_adapter(
             # forward text
             epoch_text_feature_dict = {}
             epoch_base_text_feature_dict = {}
+            epoch_base_anchor_feature_dict = {}
             for class_name in list(set(class_names)):
                 text_embedding = get_adapted_single_class_text_embedding(
                     adapted_model, dataset_name, class_name, device
@@ -73,6 +77,23 @@ def train_text_adapter(
                         clip_surgery, dataset_name, class_name, device
                     )
                     epoch_base_text_feature_dict[class_name] = base_text_embedding
+                    if class_name == "object":
+                        real_name = class_name
+                    else:
+                        assert class_name in REAL_NAMES[dataset_name], (
+                            f"class_name {class_name} not found; available class_names: {REAL_NAMES[dataset_name]}"
+                        )
+                        real_name = REAL_NAMES[dataset_name][class_name]
+                    base_sentence = [f"a photo of {real_name}."]
+                    base_tokens = tokenize(base_sentence).to(device)
+                    with torch.no_grad():
+                        base_embedding = clip_surgery.encode_text(base_tokens)
+                    base_embedding = base_embedding / base_embedding.norm(
+                        dim=-1, keepdim=True
+                    )
+                    base_embedding = base_embedding.mean(dim=0)
+                    base_embedding = base_embedding / base_embedding.norm()
+                    epoch_base_anchor_feature_dict[class_name] = base_embedding
             epoch_text_feature = torch.stack(
                 [epoch_text_feature_dict[class_name] for class_name in class_names],
                 dim=0,
@@ -85,6 +106,13 @@ def train_text_adapter(
                     ],
                     dim=0,
                 )  # bs,768,2
+                epoch_base_anchor_feature = torch.stack(
+                    [
+                        epoch_base_anchor_feature_dict[class_name]
+                        for class_name in class_names
+                    ],
+                    dim=0,
+                )  # bs,768
 
             # forward image
             with torch.no_grad():
@@ -111,11 +139,21 @@ def train_text_adapter(
                         .mean()
                     ) ** 2
                 else:
-                    orthogonal_loss = (
-                        (epoch_text_feature[:, :, 0] - epoch_base_text_feature[:, :, 0])
-                        * (epoch_text_feature[:, :, 1] - epoch_base_text_feature[:, :, 1])
-                    ).sum(1).mean() ** 2
+                    tau = 0.7
+                    e_norm = epoch_text_feature[:, :, 0]
+                    e_abn = epoch_text_feature[:, :, 1]
+                    base_anchor = epoch_base_anchor_feature
+                    d_norm = F.normalize(e_norm - base_anchor, dim=-1)
+                    d_abn = F.normalize(e_abn - base_anchor, dim=-1)
+                    orthogonal_loss = (d_norm * d_abn).sum(1).pow(2).mean()
+                    cos_norm = F.cosine_similarity(e_norm, base_anchor, dim=-1)
+                    cos_abn = F.cosine_similarity(e_abn, base_anchor, dim=-1)
+                    loss_anchor = (
+                        F.relu(tau - cos_norm).pow(2) + F.relu(tau - cos_abn).pow(2)
+                    ).mean()
                 loss += orthogonal_loss * text_norm_weight
+                if use_base_text_anchor:
+                    loss += anchor_weight * loss_anchor
             # backward
             optimizer.zero_grad()
             loss.backward()
@@ -236,6 +274,7 @@ def main():
     parser.add_argument("--text_adapt_until", type=int, default=3)
     parser.add_argument("--image_adapt_until", type=int, default=6)
     parser.add_argument("--use_base_text_anchor", action="store_true")
+    parser.add_argument("--lambda_anchor", type=float, default=0.1)
 
     args = parser.parse_args()
     # ========================================================
@@ -356,6 +395,7 @@ def main():
             img_size=args.img_size,
             logger=logger,
             use_base_text_anchor=args.use_base_text_anchor,
+            anchor_weight=args.lambda_anchor,
         )
     del text_dataloader, text_dataset, clip_surgery, text_optimizer
     torch.cuda.empty_cache()
