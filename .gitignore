@@ -34,3 +34,4 @@ dataset/constants.py
 # ignore /data, *.out files
 data/
 *.out
+*.pdf
