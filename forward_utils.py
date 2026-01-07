@@ -257,6 +257,39 @@ def metrics_eval(
     pixel_label = pixel_label.flatten()
     pixel_preds = pixel_preds.flatten()
 
+
+    # ##################### testing code to debug metrics ##########################
+    # y_true = pixel_label
+    # y_score = pixel_preds
+    #  #############################################################################
+    # import numpy as np
+
+    # print("y_true.shape:", np.array(y_true).shape)
+    # print("y_score.shape:", np.array(y_score).shape)
+
+    # y_true_arr = np.array(y_true)
+    # y_score_arr = np.array(y_score)
+
+    # N = y_true_arr.size
+    # print("num elements:", N)
+    # print("y_true dtype:", y_true_arr.dtype, "y_score dtype:", y_score_arr.dtype)
+
+    # print("y_true unique:", np.unique(y_true_arr))
+    # print("score stats:",
+    #     "min=", np.nanmin(y_score_arr),
+    #     "max=", np.nanmax(y_score_arr),
+    #     "nan=", np.isnan(y_score_arr).sum(),
+    #     "inf=", np.isinf(y_score_arr).sum())
+    
+    # # breakpoint()
+
+    total = pixel_label.shape[0]
+    if total > 1:
+        sample_size = max(1, total // 4)
+        if sample_size < total:
+            idx = np.random.default_rng().choice(total, size=sample_size, replace=False)
+            pixel_label = pixel_label[idx]
+            pixel_preds = pixel_preds[idx]
     zero_pixel_auc = roc_auc_score(pixel_label, pixel_preds)
     zero_pixel_ap = average_precision_score(pixel_label, pixel_preds)
     # ================================================================================================

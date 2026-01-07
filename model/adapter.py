@@ -3,6 +3,22 @@ from torch import nn
 import torch.nn.functional as F
 from .adapter_modules import SimpleAdapter, SimpleProj
 
+class PatchCrossAttention(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.norm_q = nn.LayerNorm(dim)
+        self.norm_kv = nn.LayerNorm(dim)
+        self.scale = dim ** -0.5
+
+    def forward(self, patch_features: torch.Tensor, text_embedding: torch.Tensor):
+        # patch_features: [B, N, D], text_embedding: [B, D]
+        q = self.norm_q(text_embedding).unsqueeze(1)
+        k = self.norm_kv(patch_features)
+        v = k
+        attn = torch.softmax(torch.matmul(q, k.transpose(-2, -1)) * self.scale, dim=-1)  # [B, 1, N]
+        attn = attn.transpose(1, 2)  # [B, N, 1]
+        return patch_features * attn
+
 class AdaptedCLIP(nn.Module):
     def __init__(
         self,
@@ -13,6 +29,7 @@ class AdaptedCLIP(nn.Module):
         image_adapt_until: int = 6,
         levels: list = [6, 12, 18, 24],
         relu: bool = True,
+        use_patch_cross_attn: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -23,6 +40,7 @@ class AdaptedCLIP(nn.Module):
         self.t_w = text_adapt_weight
         self.i_w = image_adapt_weight
         self.levels = levels
+        self.use_patch_cross_attn = use_patch_cross_attn
 
         layer_adapters = nn.ModuleList(
             [SimpleAdapter(1024, 1024) for _ in range(image_adapt_until)]
@@ -38,6 +56,8 @@ class AdaptedCLIP(nn.Module):
                 "det_proj": det_proj,
             }
         )
+        if self.use_patch_cross_attn:
+            self.image_adapter["patch_cross_attn"] = PatchCrossAttention(768)
         self.text_adapter = nn.ModuleList(
             [SimpleAdapter(768, 768) for _ in range(text_adapt_until)]
             + [SimpleProj(768, 768, relu=True)]
@@ -64,7 +84,7 @@ class AdaptedCLIP(nn.Module):
         else:
             raise ValueError("modality must be visual")
 
-    def forward(self, x):
+    def forward(self, x, text_embedding=None):
         x = self.image_encoder.conv1(x)
         x = x.reshape(x.shape[0], x.shape[1], -1)
         x = x.permute(0, 2, 1)
@@ -106,6 +126,16 @@ class AdaptedCLIP(nn.Module):
         seg_tokens = [
             self.image_adapter["seg_proj"][i](t) for i, t in enumerate(tokens)
         ]
+        if self.use_patch_cross_attn:
+            if text_embedding is None:
+                raise ValueError("text_embedding must be provided when use_patch_cross_attn is True")
+            # text_embedding: [B, D] or [B, D, *]; reduce if needed
+            if text_embedding.dim() == 3:
+                text_embedding = text_embedding.mean(dim=-1)
+            seg_tokens = [
+                self.image_adapter["patch_cross_attn"](t, text_embedding)
+                for t in seg_tokens
+            ]
         seg_tokens = [F.normalize(t, dim=-1) for t in seg_tokens]
         det_token = self.image_adapter["det_proj"](tokens[-1])
         det_token = F.normalize(det_token, dim=-1).mean(1)

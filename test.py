@@ -1,3 +1,9 @@
+# import os
+
+# print("CWD:", os.getcwd())
+# # print("exists?:", os.path.exists("./data/MedAD/Liver_AD/test/Ungood/img/4_387.png"))
+# print("exists?:", os.path.exists("data/MedAD/Liver_AD/test/ungood/img/4_387.png"))
+
 import os
 import argparse
 import numpy as np
@@ -5,6 +11,7 @@ from tqdm import tqdm
 import logging
 from glob import glob
 from pandas import DataFrame, Series
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -57,6 +64,7 @@ def get_predictions(
     device: str,
     img_size: int,
     dataset: str = "MVTec",
+    use_patch_cross_attn: bool = False,
 ):
     masks = []
     labels = []
@@ -76,8 +84,15 @@ def get_predictions(
         file_names.extend(file_name)
         # get text
         epoch_text_feature = class_text_embeddings
+        text_query = None
+        if use_patch_cross_attn:
+            text_query = epoch_text_feature.mean(dim=-1)
+            if text_query.dim() == 1:
+                text_query = text_query.unsqueeze(0).expand(image.shape[0], -1)
+            elif text_query.shape[0] != image.shape[0]:
+                text_query = text_query.expand(image.shape[0], -1)
         # forward image
-        patch_features, det_feature = model(image)
+        patch_features, det_feature = model(image, text_embedding=text_query)
         # calculate similarity and get prediction
         # cls_preds = []
         pred = det_feature @ epoch_text_feature
@@ -123,6 +138,7 @@ def main():
     parser.add_argument("--image_adapt_weight", type=float, default=0.1)
     parser.add_argument("--text_adapt_until", type=int, default=3)
     parser.add_argument("--image_adapt_until", type=int, default=6)
+    parser.add_argument("--use_patch_cross_attn", action="store_true")
 
     args = parser.parse_args()
     # ========================================================
@@ -157,6 +173,7 @@ def main():
         text_adapt_until=args.text_adapt_until,
         image_adapt_until=args.image_adapt_until,
         relu=args.relu,
+        use_patch_cross_attn=args.use_patch_cross_attn,
     ).to(device)
     model.eval()
     # load checkpoints if exists
@@ -224,6 +241,7 @@ def main():
                     device=device,
                     img_size=args.img_size,
                     dataset=args.dataset,
+                    use_patch_cross_attn=args.use_patch_cross_attn,
                 )
             # ========================================================
             if args.visualize:
@@ -244,8 +262,11 @@ def main():
                 domain=DOMAINS[args.dataset],
             )
             df.loc[len(df)] = Series(class_result_dict)
-        df.loc[len(df)] = df.mean()
-        df.loc[len(df) - 1]["class name"] = "Average"
+        metric_columns = [col for col in df.columns if col != "class name"]
+        mean_values = (
+            df.loc[:, metric_columns].apply(pd.to_numeric, errors="coerce").mean()
+        )
+        df.loc[len(df)] = {"class name": "Average", **mean_values.to_dict()}
         logger.info("final results:\n%s", df.to_string(index=False, justify="center"))
 
 

@@ -186,6 +186,7 @@ def train_image_adapter(
     image_epoch: int,
     img_size: int,
     logger: logging.Logger,
+    use_patch_cross_attn: bool = False,
 ):
     for epoch in range(start_epoch, image_epoch):
         logger.info(f"training image epoch {epoch}:")
@@ -200,9 +201,12 @@ def train_image_adapter(
             epoch_text_feature = torch.stack(
                 [text_embeddings[class_name] for class_name in class_names], dim=0
             )
+            text_query = None
+            if use_patch_cross_attn:
+                text_query = epoch_text_feature.mean(dim=-1)
 
             # forward image
-            patch_features, det_feature = model(image)
+            patch_features, det_feature = model(image, text_embedding=text_query)
             # calculate similarity and get prediction
             loss = 0.0
             det_feature = det_feature.unsqueeze(1)
@@ -275,6 +279,7 @@ def main():
     parser.add_argument("--image_adapt_until", type=int, default=6)
     parser.add_argument("--use_base_text_anchor", action="store_true")
     parser.add_argument("--lambda_anchor", type=float, default=0.1)
+    parser.add_argument("--use_patch_cross_attn", action="store_true")
 
     args = parser.parse_args()
     # ========================================================
@@ -319,6 +324,7 @@ def main():
         text_adapt_until=args.text_adapt_until,
         image_adapt_until=args.image_adapt_until,
         relu=args.relu,
+        use_patch_cross_attn=args.use_patch_cross_attn,
     ).to(device)
     model.eval()
     # set optimizer
@@ -418,6 +424,7 @@ def main():
         save_path=args.save_path,
         img_size=args.img_size,
         logger=logger,
+        use_patch_cross_attn=args.use_patch_cross_attn,
     )
 
 
