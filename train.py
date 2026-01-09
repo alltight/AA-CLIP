@@ -131,7 +131,7 @@ def train_text_adapter(
             
             for f in patch_features:
                 # bs,patch_num,768
-                patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size)
+                patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size) # bs, 2, sqrt(patch_nms), sqrt(patch_num)
                 loss = calculate_seg_loss(patch_preds, mask)
                 if not use_base_text_anchor:
                     orthogonal_loss = (
@@ -303,7 +303,7 @@ def main():
         require_pretrained=True,
     )
     clip_surgery.eval()
-    clip_surgery.visual.DAPM_replace(DPAM_layer=args.surgery_until_layer)
+    clip_surgery.visual.DAPM_replace(DPAM_layer=args.surgery_until_layer) # default = 20
     # set up model for training
     clip_model = create_model(
         model_name=args.model_name,

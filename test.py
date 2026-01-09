@@ -244,8 +244,14 @@ def main():
                 domain=DOMAINS[args.dataset],
             )
             df.loc[len(df)] = Series(class_result_dict)
-        df.loc[len(df)] = df.mean()
-        df.loc[len(df) - 1]["class name"] = "Average"
+        num_columns = [
+            "pixel AUC",
+            "pixel AP",
+            "image AUC",
+            "image AP",
+        ]
+        avg_values = df[num_columns].mean()
+        df.loc[len(df)] = ["Average"] + avg_values.tolist()
         logger.info("final results:\n%s", df.to_string(index=False, justify="center"))
 
 

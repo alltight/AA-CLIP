@@ -98,7 +98,7 @@ class AdaptedCLIP(nn.Module):
                 )
                 x = self.i_w * adapt_out + (1 - self.i_w) * x
             if i + 1 in self.levels:
-                tokens.append(x[1:, :, :])
+                tokens.append(x[1:, :, :]) # H*W, bs, D
 
         x = x.permute(1, 0, 2)
         tokens = [t.permute(1, 0, 2) for t in tokens]
