@@ -25,6 +25,7 @@ from dataset import get_dataset, DOMAINS
 from forward_utils import (
     get_adapted_text_embedding,
     calculate_similarity_map,
+    calculate_similarity_map_with_seg_head,
     metrics_eval,
     visualize,
 )
@@ -65,6 +66,7 @@ def get_predictions(
     img_size: int,
     dataset: str = "MVTec",
     use_patch_cross_attn: bool = False,
+    use_segmentation_head: bool = False,
 ):
     masks = []
     labels = []
@@ -98,15 +100,23 @@ def get_predictions(
         pred = det_feature @ epoch_text_feature
         pred = (pred[:, 1] + 1) / 2
         preds_image.append(pred.cpu().numpy())
-        patch_preds = []
-        for f in patch_features:
-            # f: bs,patch_num,768
-            patch_pred = calculate_similarity_map(
-                f, epoch_text_feature, img_size, test=True, domain=DOMAINS[dataset]
-            )
-            patch_preds.append(patch_pred)
-        patch_preds = torch.cat(patch_preds, dim=1).sum(1).cpu().numpy()
-        preds.append(patch_preds)
+        
+        if use_segmentation_head:
+            patch_preds_origin = calculate_similarity_map_with_seg_head(patch_features, epoch_text_feature,img_size, model)
+            # patch_preds_origin = torch.softmax(patch_preds_origin, dim=1)
+            patch_preds = (patch_preds_origin[:, 1] + 1 - patch_preds_origin[:, 0]) / 2
+            preds.append(patch_preds.cpu().numpy())
+        else:
+            patch_preds = []
+            for f in patch_features:
+                # f: bs,patch_num,768
+                patch_pred = calculate_similarity_map(
+                    f, epoch_text_feature, img_size, test=True, domain=DOMAINS[dataset]
+                )
+                patch_preds.append(patch_pred)
+            patch_preds = torch.cat(patch_preds, dim=1).sum(1).cpu().numpy()
+            preds.append(patch_preds)
+
     masks = np.concatenate(masks, axis=0)
     labels = np.concatenate(labels, axis=0)
     preds = np.concatenate(preds, axis=0)
@@ -139,6 +149,7 @@ def main():
     parser.add_argument("--text_adapt_until", type=int, default=3)
     parser.add_argument("--image_adapt_until", type=int, default=6)
     parser.add_argument("--use_patch_cross_attn", action="store_true")
+    parser.add_argument("--use_segmentation_head", action="store_true")
 
     args = parser.parse_args()
     # ========================================================
@@ -174,6 +185,7 @@ def main():
         image_adapt_until=args.image_adapt_until,
         relu=args.relu,
         use_patch_cross_attn=args.use_patch_cross_attn,
+        use_segmentation_head=args.use_segmentation_head,
     ).to(device)
     model.eval()
     # load checkpoints if exists
@@ -188,6 +200,7 @@ def main():
 
     files = sorted(glob(args.save_path + "/image_adapter_*.pth"))
     assert len(files) > 0, "image adapter checkpoint not found"
+    result_dict = {}
     for file in files:
         checkpoint = torch.load(file)
         model.image_adapter.load_state_dict(checkpoint["image_adapter"])
@@ -242,6 +255,7 @@ def main():
                     img_size=args.img_size,
                     dataset=args.dataset,
                     use_patch_cross_attn=args.use_patch_cross_attn,
+                    use_segmentation_head=args.use_segmentation_head
                 )
             # ========================================================
             if args.visualize:
@@ -268,6 +282,11 @@ def main():
         )
         df.loc[len(df)] = {"class name": "Average", **mean_values.to_dict()}
         logger.info("final results:\n%s", df.to_string(index=False, justify="center"))
+        result_dict[test_epoch] = [df.loc[len(df) - 1]]
+    logger.info(f"dataset: {args.dataset}")
+    for k, v in sorted(result_dict.items(), key=lambda item: item[1][0]['image AUC'], reverse=True):
+        logger.info(f"epoch {k}: {v[0]}")
+        
 
 
 if __name__ == "__main__":

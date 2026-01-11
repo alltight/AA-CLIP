@@ -7,11 +7,11 @@
 #SBATCH --time 12:00:00
 #SBATCH --mem 32G
 set -e
-save_path="./ckpt/issue_all"
+save_path="./ckpt/issue_only_1_2"
 
-# python train.py --save_path $save_path --training_mode full_shot --use_base_text_anchor --use_patch_cross_attn --text_batch_size 8
+python train.py --save_path $save_path --training_mode full_shot --use_base_text_anchor --use_patch_cross_attn --text_batch_size 8
 
-# echo "train successfully"
+echo "train successfully"
 
 declare -a dataset=(MVTec BTAD MPDD Brain Liver Retina Colon_clinicDB Colon_colonDB Colon_Kvasir Colon_cvc300)
 for i in "${dataset[@]}"; do
@@ -19,4 +19,5 @@ for i in "${dataset[@]}"; do
     echo $i
     echo "test successfully"
 done
+echo "all test"
 # python test.py --save_path $save_path --dataset MVTec

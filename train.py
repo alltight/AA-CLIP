@@ -19,6 +19,7 @@ from forward_utils import (
     get_adapted_text_embedding,
     get_adapted_single_class_text_embedding,
     calculate_similarity_map,
+    calculate_similarity_map_with_seg_head,
     calculate_seg_loss,
 )
 from model.tokenizer import tokenize
@@ -35,7 +36,6 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = str(cpu_num)
 os.environ["NUMEXPR_NUM_THREADS"] = str(cpu_num)
 torch.set_num_threads(cpu_num)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 
 def train_text_adapter(
     adapted_model: nn.Module,
@@ -128,7 +128,6 @@ def train_text_adapter(
                 ]
                 patch_features = [t + cls_token.unsqueeze(1) for t in patch_features]
             # calculate similarity and get prediction
-            
             for f in patch_features:
                 # bs,patch_num,768
                 patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size) # bs, 2, sqrt(patch_nms), sqrt(patch_num)
@@ -188,6 +187,7 @@ def train_image_adapter(
     img_size: int,
     logger: logging.Logger,
     use_patch_cross_attn: bool = False,
+    use_segmentation_head: bool = False,
 ):
     for epoch in range(start_epoch, image_epoch):
         logger.info(f"training image epoch {epoch}:")
@@ -213,10 +213,15 @@ def train_image_adapter(
             det_feature = det_feature.unsqueeze(1)
             cls_preds = torch.matmul(det_feature, epoch_text_feature)[:, 0]
             loss += F.cross_entropy(cls_preds, label)
-            for f in patch_features:
-                # text-image alignment
-                patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size)
-                loss += calculate_seg_loss(patch_preds, mask)  # backward
+
+            if use_segmentation_head:
+                patch_preds = calculate_similarity_map_with_seg_head(patch_features, epoch_text_feature, img_size, model)
+                loss += calculate_seg_loss(patch_preds, mask)
+            else:
+                for f in patch_features:
+                    # text-image alignment
+                    patch_preds = calculate_similarity_map(f, epoch_text_feature, img_size)
+                    loss += calculate_seg_loss(patch_preds, mask)  # backward
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -281,6 +286,7 @@ def main():
     parser.add_argument("--use_base_text_anchor", action="store_true")
     parser.add_argument("--lambda_anchor", type=float, default=0.1)
     parser.add_argument("--use_patch_cross_attn", action="store_true")
+    parser.add_argument("--use_segmentation_head", action="store_true")
 
     args = parser.parse_args()
     # ========================================================
@@ -326,6 +332,7 @@ def main():
         image_adapt_until=args.image_adapt_until,
         relu=args.relu,
         use_patch_cross_attn=args.use_patch_cross_attn,
+        use_segmentation_head=args.use_segmentation_head
     ).to(device)
     model.eval()
     # set optimizer
@@ -426,6 +433,7 @@ def main():
         img_size=args.img_size,
         logger=logger,
         use_patch_cross_attn=args.use_patch_cross_attn,
+        use_segmentation_head=args.use_segmentation_head
     )
 
 

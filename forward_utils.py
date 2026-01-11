@@ -215,6 +215,15 @@ def calculate_similarity_map(
         patch_preds = torch.softmax(patch_preds, dim=1)
     return patch_preds
 
+def calculate_similarity_map_with_seg_head(
+    patch_features, epoch_text_feature, img_size, model, test=False
+):
+    preds = model.segmentation_head(patch_features, epoch_text_feature)
+    preds = F.interpolate(
+        preds, size=img_size, mode="bilinear", align_corners=True
+    )
+    preds = torch.concat([1 - preds, preds], dim=1)
+    return preds
 
 focal_loss = FocalLoss()
 dice_loss = BinaryDiceLoss()
