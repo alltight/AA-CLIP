@@ -14,7 +14,7 @@ save_path="./ckpt/issue_only_3"
 # echo "train successfully"
 
 # declare -a dataset=(MVTec BTAD MPDD Brain Liver Retina Colon_clinicDB Colon_colonDB Colon_Kvasir Colon_cvc300)
-declare -a dataset=(Brain Liver Retina Colon_clinicDB Colon_colonDB Colon_Kvasir Colon_cvc300)
+declare -a dataset=(Retina Colon_clinicDB Colon_colonDB Colon_Kvasir Colon_cvc300)
 for i in "${dataset[@]}"; do
     python test.py --save_path $save_path --dataset $i --use_segmentation_head
     echo $i
